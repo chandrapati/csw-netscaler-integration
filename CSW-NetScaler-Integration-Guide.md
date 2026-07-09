@@ -22,7 +22,7 @@ CSW connects to the NetScaler **NITRO REST API** to:
 | The load balancer is a "black box" — CSW doesn't know which VIPs are which services | The **orchestrator** imports each LB virtual server as a labeled **service inventory** item (`service_name`, `orchestrator_*`) |
 | You want the ADC to enforce your segmentation policy | **Policy enforcement** translates CSW policies into **NetScaler ACL rules** and pushes them via the NITRO REST API |
 
-> **Important scope note:** Unlike the F5 integration, NetScaler **does not** provide service **flow visibility** to CSW. This integration is **label import + ACL enforcement only**. For flow telemetry, use agents, NetFlow, or ERSPAN elsewhere in the estate.
+> **Important — two integration paths:** This guide focuses on the **External Orchestrator** (labels + ACL enforcement). Per Cisco's documentation, the orchestrator itself *"does not support visibility for the detected services (the virtual servers)."* However, NetScaler flow visibility **is** available through a separate mechanism — the **NetScaler Connector**, a Citrix **AppFlow / IPFIX** collector that runs on a Secure Workload **Ingest appliance** (see **§2.1**), directly analogous to the F5 IPFIX path.
 
 ---
 
@@ -30,11 +30,12 @@ CSW connects to the NetScaler **NITRO REST API** to:
 
 ![CSW and NetScaler ADC Integration Architecture](csw-netscaler-architecture.png)
 
-*The External Orchestrator uses the NetScaler NITRO REST API (HTTPS) to import LB virtual servers as service-inventory labels and to push ACL rules back to the appliance's global ACL list. There is no flow-telemetry path.*
+*Two independent paths. The **External Orchestrator** uses the NetScaler NITRO REST API (HTTPS) to import LB virtual servers as service-inventory labels and to push ACL rules back to the appliance's global ACL list. Separately, the **NetScaler Connector** receives Citrix AppFlow (IPFIX) records for flow visibility.*
 
 | Path | Direction | Transport | Purpose |
 |---|---|---|---|
 | **External Orchestrator** | CSW ⇄ NetScaler | HTTPS NITRO REST API | Import LB virtual servers → labels; push ACL rules |
+| **NetScaler Connector** *(optional)* | NetScaler → CSW Ingest appliance | Citrix AppFlow / **IPFIX (UDP 4739)** | Ingest & stitch client/server-side (NATed) flows for visibility — agentless |
 
 ---
 
@@ -53,6 +54,27 @@ CSW connects to the NetScaler **NITRO REST API** to:
 Use these in **inventory search**, **scopes**, and **policies** — for example, segment everything served by a given VIP.
 
 **Policy enforcement** (optional) — CSW translates logical policies whose **provider** matches a NetScaler LB virtual server into **NetScaler ACL rules** and deploys them via NITRO. CSW becomes the source of truth for those ACLs.
+
+### 2.1 Optional: flow visibility via the NetScaler Connector (Citrix AppFlow / IPFIX)
+
+The External Orchestrator gives you labels and enforcement but **not** flow visibility for the virtual servers. To see NetScaler traffic in CSW, deploy the **NetScaler Connector** — a Citrix **AppFlow (IPFIX)** collector, analogous to the F5 IPFIX path:
+
+- Runs as a **Docker container on a Secure Workload Ingest appliance** and registers as a **NetScaler agent** in CSW.
+- NetScaler **AppFlow** exports **IPFIX** flow records to the connector, which **stitches client-side and server-side (NATed) flows** — no host agents required.
+- **IPFIX only**; requires **Citrix ADC software 11.1.51.26 or above**; the connector listens on **UDP 4739**.
+- Each connector reports flows for **one VRF** — set the **Agent Remote VRF** config in CSW (`Manage → Agents → Configuration`).
+
+**High-level NetScaler AppFlow config** (ref: Citrix *Configuring AppFlow*):
+
+```
+enable ns feature appflow
+add appflow collector c1 -IPAddress <ingest-appliance-ip> -port 4739
+add appflow action a1 -collectors c1
+add appflow policy p1 CLIENT.TCP.DSTPORT(443) a1
+bind lb vserver <vserver_name> -policyName p1 -priority 10
+```
+
+Then, in CSW, enable a **NetScaler connector** on an **Ingest** virtual appliance and point NetScaler AppFlow at its `IP:4739`. See the Cisco doc: *Configure and Manage Connectors → NetScaler Connector*.
 
 ---
 
@@ -225,7 +247,7 @@ Useful endpoints: `GET/POST/PUT/DELETE /openapi/v1/orchestrator/{scope}[/{id}]`,
 | **Certificate error** | NetScaler presents a self-signed cert → install a CA-signed cert (preferred) or check **Accept Self-signed Cert** / set `insecure: True` (lab only). |
 | **ACL rules not found after enforcement** | Ensure the LB virtual server is **enabled / up**; only then are ACLs applied. |
 | **VIP not imported** | Only **single-address** VIPs are supported (not address-pattern VIPs). |
-| **No service visibility** | Expected — NetScaler service **flow visibility is not supported** by this integration. Use agents / NetFlow / ERSPAN for flow data. |
+| **No service flow visibility** | The **External Orchestrator** does not provide flow visibility for detected virtual servers. For NetScaler flow telemetry, deploy the **NetScaler Connector** (Citrix AppFlow/IPFIX) on an Ingest appliance (see §2.1). Agents / NetFlow / ERSPAN remain options elsewhere in the estate. |
 | **ACLs applied to wrong partition** | Expected — CSW always deploys to the **global ACL list (partition default)**. |
 | **Enforcement removed unexpectedly** | Disabling enforcement or deleting the orchestrator **clears all CSW ACLs** from the NetScaler — expected behavior. |
 
