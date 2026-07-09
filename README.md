@@ -16,11 +16,11 @@ A step-by-step, **beginner-friendly** integration guide for **NetScaler ADC** (f
 
 | Area | Detail |
 |---|---|
-| **Integration type** | External Orchestrator (`type: Citrix Netscaler`, `orch_type: nsbalancer`) |
-| **Data imported** | Load Balancing **virtual servers** → service inventory labels (`service_name`) |
-| **Transport** | HTTPS **NITRO REST API** |
+| **Integration paths** | **(1) External Orchestrator** (`type: Citrix Netscaler`, `orch_type: nsbalancer`) → labels + ACL enforcement · **(2) NetScaler Connector** (Citrix **AppFlow / IPFIX** on a Secure Workload Ingest appliance) → flow visibility |
+| **Data imported** | Load Balancing **virtual servers** → service inventory labels (`service_name`); plus **stitched flow telemetry** via the connector |
+| **Transport** | HTTPS **NITRO REST API** (orchestrator) · **AppFlow/IPFIX UDP 4739** (connector) |
 | **Enforcement** | CSW translates policies → **NetScaler ACL rules** (global ACL list, partition default) — requires **write** creds |
-| **Visibility** | ❌ Service **flow visibility not supported** (labels + ACL enforcement only) |
+| **Visibility** | ✅ **Flow visibility via the NetScaler Connector** (Citrix AppFlow/IPFIX, agentless, stitches client- and server-side NATed flows). ⚠ The **External Orchestrator itself does not** provide visibility for the detected virtual servers — that is what the connector is for. |
 | **Connectivity** | Direct (on-prem) or via **Secure Connector** tunnel (SaaS / non-routable) |
 | **Result** | `orchestrator_*` + `service_name` labels, ACL rule deployment |
 | **Verified against** | CSW 4.x on-prem and SaaS; NetScaler ADC v12.0.57.19+ |
@@ -57,7 +57,7 @@ See the [full step-by-step guide](CSW-NetScaler-Integration-Guide.md) or [open t
 
 ![CSW and NetScaler ADC Integration Architecture](csw-netscaler-architecture.png)
 
-*The External Orchestrator (HTTPS NITRO REST) imports LB virtual servers as service labels and pushes ACL rules to the NetScaler global ACL list. NetScaler service flow visibility is not supported by this integration.*
+*Two independent paths. **External Orchestrator** (HTTPS NITRO REST): imports LB virtual servers as service labels and pushes ACL rules to the NetScaler global ACL list. **NetScaler Connector** (Citrix AppFlow/IPFIX on a Secure Workload Ingest appliance): ingests and stitches flow telemetry for visibility. Note: the orchestrator alone does not provide visibility for the detected virtual servers — the connector provides the flow data.*
 
 ---
 
@@ -97,7 +97,7 @@ See the [full step-by-step guide](CSW-NetScaler-Integration-Guide.md) or [open t
 | `orchestrator_system/service_name` | *(virtual server name)* |
 | `orchestrator_annotation/snat_address` | *(SNAT address)* |
 
-> **Important:** Only **single-address** VIPs are imported (not address-pattern VIPs). Enabling enforcement makes **CSW the owner** of the NetScaler ACLs (deployed to the global ACL list / partition default); disabling it **removes** those ACLs. **Service flow visibility is not supported.**
+> **Important:** Only **single-address** VIPs are imported (not address-pattern VIPs). Enabling enforcement makes **CSW the owner** of the NetScaler ACLs (deployed to the global ACL list / partition default); disabling it **removes** those ACLs. The **External Orchestrator does not** provide flow visibility for the detected virtual servers — deploy the separate **NetScaler Connector** (Citrix AppFlow/IPFIX) for flow telemetry.
 
 ---
 
